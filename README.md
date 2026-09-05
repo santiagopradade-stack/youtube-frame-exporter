@@ -1,38 +1,45 @@
-# YouTube Scene Frame Exporter
+# YouTube Frame Exporter
 
-A Windows desktop app that downloads one YouTube video, detects scene changes, and exports the exact first and last frame of every detected scene.
+A simple Windows desktop app that downloads one YouTube video and exports frames into three separate interval folders.
 
 ## Use the app
 
 1. Run `YouTubeSceneFrameExporter.exe`.
 2. Paste a YouTube or `youtu.be` video link.
 3. Choose where to save the images.
-4. Start with **Normal** scene sensitivity.
-5. Click **Export scene frames**.
+4. Click **Export frames**.
 
-The app creates a new video-specific folder on every run. Files look like:
+For each link, the app creates a video-specific folder like this:
 
 ```text
-scene_0001_first.jpg
-scene_0001_last.jpg
-scene_0002_first.jpg
-scene_0002_last.jpg
+Video title [video-id]/
+├── Every 1 Second/
+│   ├── frame_000000s.jpg
+│   ├── frame_000001s.jpg
+│   └── ...
+├── Every 3 Seconds/
+│   ├── frame_000000s.jpg
+│   ├── frame_000003s.jpg
+│   └── ...
+└── Every 5 Seconds/
+    ├── frame_000000s.jpg
+    ├── frame_000005s.jpg
+    └── ...
 ```
 
-If separate shots are combined into one scene, choose **High — more scenes**. If flashes or rapid motion create too many scenes, choose **Low — fewer scenes**.
+Every new export gets its own folder. If the same video is exported again, the app adds `(2)`, `(3)`, and so on instead of overwriting existing images.
 
 ## Build the Windows `.exe`
 
 1. Install [Python 3.11 or newer](https://www.python.org/downloads/windows/) and enable **Add Python to PATH**.
 2. Double-click `build_windows.bat`.
-3. Run `dist\YouTubeSceneFrameExporter.exe`.
+3. Run `dist\\YouTubeSceneFrameExporter.exe`.
 
-The build script packages Deno, FFmpeg, OpenCV, PySceneDetect, `yt-dlp`, and Python into the executable. The result is large but does not require separate runtime installations.
+The build script packages Deno, FFmpeg, OpenCV, `yt-dlp`, and Python into the executable. The result does not require separate runtime installations.
 
 You can also run the **Build Windows executable** workflow in GitHub Actions and download the `YouTubeSceneFrameExporter-Windows` artifact.
 
 ## Notes
 
 - Only download videos you have permission to use and follow YouTube's terms.
-- Scene detection is content-based and may take several minutes for long videos.
-- Scene boundaries are subjective. The sensitivity setting lets you tune the result.
+- Long or high-resolution videos can take several minutes and produce many images.

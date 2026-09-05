@@ -1,0 +1,13 @@
+YouTube Frame Exporter is licensed under the GNU General Public License,
+version 3 or (at your option) any later version (GPL-3.0-or-later).
+
+The complete license text is available at:
+https://www.gnu.org/licenses/gpl-3.0.txt
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE.
+
+The compiled application contains third-party components distributed under
+their respective licenses, including yt-dlp, imageio-ffmpeg, FFmpeg, Deno,
+Python, and Tcl/Tk.

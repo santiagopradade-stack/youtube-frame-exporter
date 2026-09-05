@@ -24,8 +24,7 @@ jobs:
           python -m PyInstaller --noconfirm --clean --onefile --windowed
           --add-binary "deno.exe;."
           --name YouTubeSceneFrameExporter --collect-all imageio_ffmpeg
-          --collect-all yt_dlp --collect-all yt_dlp_ejs
-          --collect-all scenedetect app.py
+          --collect-all yt_dlp --collect-all yt_dlp_ejs app.py
       - uses: actions/upload-artifact@v4
         with:
           name: YouTubeSceneFrameExporter-Windows

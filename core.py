@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import math
 import re
 from pathlib import Path
 from urllib.parse import urlparse
+
+
+INTERVALS = (1, 3, 5)
 
 
 def is_youtube_url(value: str) -> bool:
@@ -23,11 +27,22 @@ def safe_folder_name(title: str, video_id: str) -> str:
     return f"{cleaned or 'youtube_video'} [{video_id}]"
 
 
-def scene_frame_targets(scenes: list[tuple[int, int]]) -> dict[int, list[str]]:
-    """Map exact frame numbers to scene-first/scene-last output names.
+def sample_seconds(duration_seconds: float) -> list[int]:
+    """Return whole-second timestamps from zero to just before the video ends."""
+    if not math.isfinite(duration_seconds) or duration_seconds <= 0:
+        raise ValueError("Video duration must be a positive finite number.")
+    return list(range(math.ceil(duration_seconds)))
 
-    Scene ranges use an inclusive start and exclusive end frame.
-    """
+
+def intervals_for_second(second: int) -> tuple[int, ...]:
+    """Return the output intervals that should receive a timestamped frame."""
+    if second < 0:
+        raise ValueError("Second cannot be negative.")
+    return tuple(interval for interval in INTERVALS if second % interval == 0)
+
+
+def scene_frame_targets(scenes: list[tuple[int, int]]) -> dict[int, list[str]]:
+    """Retained for compatibility with older app builds."""
     targets: dict[int, list[str]] = {}
     for index, (start, end) in enumerate(scenes, start=1):
         if start < 0 or end <= start:

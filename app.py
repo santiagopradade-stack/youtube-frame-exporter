@@ -40,6 +40,22 @@ def find_deno() -> str:
     )
 
 
+def write_jpeg(path: Path, frame: object) -> None:
+    """Encode first, then let Python write the file.
+
+    OpenCV's direct imwrite call can fail on Windows when any folder in the
+    path contains Unicode characters (for example, characters in a video
+    title).  Python's pathlib supports those paths correctly.
+    """
+    ok, encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    if not ok:
+        raise RuntimeError(f"Could not encode {path.name} as a JPG image.")
+    try:
+        path.write_bytes(encoded.tobytes())
+    except OSError as exc:
+        raise RuntimeError(f"Could not write {path.name}:\n{exc}") from exc
+
+
 class FrameExporterApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
@@ -187,8 +203,7 @@ class FrameExporterApp:
                     break
                 filename = f"frame_{second:06d}s.jpg"
                 for interval in intervals_for_second(second):
-                    if not cv2.imwrite(str(interval_folders[interval] / filename), frame):
-                        raise RuntimeError(f"Could not write {filename} in the {interval}-second folder.")
+                    write_jpeg(interval_folders[interval] / filename, frame)
                     counts[interval] += 1
                 percent = 65.0 + ((index + 1) / len(seconds)) * 34.0
                 self.events.put(("progress", (min(99.0, percent), f"Exporting frame at {second:,} seconds…")))

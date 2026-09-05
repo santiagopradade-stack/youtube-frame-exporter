@@ -23,10 +23,11 @@ jobs:
         run: >-
           python -m PyInstaller --noconfirm --clean --onefile --windowed
           --add-binary "deno.exe;."
-          --name YouTubeFrameExporter --collect-all imageio_ffmpeg
-          --collect-all yt_dlp --collect-all yt_dlp_ejs app.py
+          --name YouTubeSceneFrameExporter --collect-all imageio_ffmpeg
+          --collect-all yt_dlp --collect-all yt_dlp_ejs
+          --collect-all scenedetect app.py
       - uses: actions/upload-artifact@v4
         with:
-          name: YouTubeFrameExporter-Windows
-          path: dist/YouTubeFrameExporter.exe
+          name: YouTubeSceneFrameExporter-Windows
+          path: dist/YouTubeSceneFrameExporter.exe
           if-no-files-found: error

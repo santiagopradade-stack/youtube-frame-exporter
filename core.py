@@ -23,20 +23,24 @@ def safe_folder_name(title: str, video_id: str) -> str:
     return f"{cleaned or 'youtube_video'} [{video_id}]"
 
 
-def make_ffmpeg_command(ffmpeg: str, video: Path, output_pattern: Path) -> list[str]:
-    return [
-        ffmpeg,
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-i",
-        str(video),
-        "-vf",
-        "fps=1",
-        "-q:v",
-        "2",
-        "-start_number",
-        "0",
-        str(output_pattern),
-    ]
+def scene_frame_targets(scenes: list[tuple[int, int]]) -> dict[int, list[str]]:
+    """Map exact frame numbers to scene-first/scene-last output names.
+
+    Scene ranges use an inclusive start and exclusive end frame.
+    """
+    targets: dict[int, list[str]] = {}
+    for index, (start, end) in enumerate(scenes, start=1):
+        if start < 0 or end <= start:
+            raise ValueError(f"Invalid scene range: {start}, {end}")
+        targets.setdefault(start, []).append(f"scene_{index:04d}_first.jpg")
+        targets.setdefault(end - 1, []).append(f"scene_{index:04d}_last.jpg")
+    return targets
+
+
+def unique_output_folder(parent: Path, name: str) -> Path:
+    candidate = parent / name
+    suffix = 2
+    while candidate.exists():
+        candidate = parent / f"{name} ({suffix})"
+        suffix += 1
+    return candidate

@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 import queue
 import shutil
-import subprocess
 import sys
 import tempfile
 import threading
@@ -11,18 +10,25 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+import cv2
 import imageio_ffmpeg
 import yt_dlp
+from scenedetect import SceneManager, open_video
+from scenedetect.detectors import ContentDetector
 
-from core import is_youtube_url, make_ffmpeg_command, safe_folder_name
+from core import is_youtube_url, safe_folder_name, scene_frame_targets, unique_output_folder
 
 
-APP_NAME = "YouTube Frame Exporter"
+APP_NAME = "YouTube Scene Frame Exporter"
 VIDEO_SUFFIXES = {".mp4", ".mkv", ".webm", ".mov", ".m4v"}
+SENSITIVITY = {"High — more scenes": 18.0, "Normal": 27.0, "Low — fewer scenes": 38.0}
+
+
+class Cancelled(Exception):
+    pass
 
 
 def find_deno() -> str:
-    """Find Deno bundled by PyInstaller or installed on PATH."""
     bundle_root = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
     bundled = bundle_root / ("deno.exe" if os.name == "nt" else "deno")
     if bundled.is_file():
@@ -36,26 +42,20 @@ def find_deno() -> str:
     )
 
 
-class Cancelled(Exception):
-    pass
-
-
-class FrameExporterApp:
+class SceneFrameExporterApp:
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("680x390")
-        self.root.minsize(600, 360)
-
+        self.root.geometry("700x470")
+        self.root.minsize(620, 430)
         self.url_var = tk.StringVar()
-        self.output_var = tk.StringVar(value=str(Path.home() / "Pictures" / "YouTube Frames"))
+        self.output_var = tk.StringVar(value=str(Path.home() / "Pictures" / "YouTube Scene Frames"))
+        self.sensitivity_var = tk.StringVar(value="Normal")
         self.status_var = tk.StringVar(value="Ready")
         self.progress_var = tk.DoubleVar(value=0)
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.cancel_event = threading.Event()
-        self.ffmpeg_process: subprocess.Popen[str] | None = None
         self.running = False
-
         self._build_ui()
         self.root.after(100, self._poll_events)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
@@ -64,45 +64,49 @@ class FrameExporterApp:
         container = ttk.Frame(self.root, padding=22)
         container.pack(fill="both", expand=True)
         container.columnconfigure(0, weight=1)
-
         ttk.Label(container, text=APP_NAME, font=("Segoe UI", 18, "bold")).grid(
             row=0, column=0, columnspan=2, sticky="w", pady=(0, 4)
         )
         ttk.Label(
-            container,
-            text="Paste a YouTube link and export one high-quality JPG for every second.",
+            container, text="Export the first and last frame of every automatically detected scene."
         ).grid(row=1, column=0, columnspan=2, sticky="w", pady=(0, 18))
-
         ttk.Label(container, text="YouTube link").grid(row=2, column=0, columnspan=2, sticky="w")
         self.url_entry = ttk.Entry(container, textvariable=self.url_var)
         self.url_entry.grid(row=3, column=0, columnspan=2, sticky="ew", pady=(5, 14))
         self.url_entry.focus_set()
-
-        ttk.Label(container, text="Save frames in").grid(row=4, column=0, columnspan=2, sticky="w")
+        ttk.Label(container, text="Save scene frames in").grid(row=4, column=0, columnspan=2, sticky="w")
         self.output_entry = ttk.Entry(container, textvariable=self.output_var)
-        self.output_entry.grid(row=5, column=0, sticky="ew", pady=(5, 18), padx=(0, 8))
+        self.output_entry.grid(row=5, column=0, sticky="ew", pady=(5, 14), padx=(0, 8))
         self.browse_button = ttk.Button(container, text="Browse…", command=self._browse)
-        self.browse_button.grid(row=5, column=1, sticky="ew", pady=(5, 18))
-
-        self.progress = ttk.Progressbar(container, variable=self.progress_var, maximum=100)
-        self.progress.grid(row=6, column=0, columnspan=2, sticky="ew", pady=(0, 8))
-        ttk.Label(container, textvariable=self.status_var, wraplength=620).grid(
-            row=7, column=0, columnspan=2, sticky="w", pady=(0, 18)
+        self.browse_button.grid(row=5, column=1, sticky="ew", pady=(5, 14))
+        ttk.Label(container, text="Scene sensitivity").grid(row=6, column=0, columnspan=2, sticky="w")
+        self.sensitivity_box = ttk.Combobox(
+            container, textvariable=self.sensitivity_var, values=list(SENSITIVITY), state="readonly", width=24
         )
-
-        button_bar = ttk.Frame(container)
-        button_bar.grid(row=8, column=0, columnspan=2, sticky="e")
-        self.cancel_button = ttk.Button(button_bar, text="Cancel", command=self._cancel, state="disabled")
-        self.cancel_button.pack(side="left", padx=(0, 8))
-        self.export_button = ttk.Button(button_bar, text="Export frames", command=self._start)
-        self.export_button.pack(side="left")
-
+        self.sensitivity_box.grid(row=7, column=0, columnspan=2, sticky="w", pady=(5, 5))
         ttk.Label(
             container,
-            text="Only download videos you have permission to use. A long video can create thousands of images.",
+            text="Use Normal first. Choose High if shots were combined, or Low if too many scenes were found.",
             foreground="#666666",
-            wraplength=620,
-        ).grid(row=9, column=0, columnspan=2, sticky="w", pady=(18, 0))
+            wraplength=650,
+        ).grid(row=8, column=0, columnspan=2, sticky="w", pady=(0, 16))
+        self.progress = ttk.Progressbar(container, variable=self.progress_var, maximum=100)
+        self.progress.grid(row=9, column=0, columnspan=2, sticky="ew", pady=(0, 8))
+        ttk.Label(container, textvariable=self.status_var, wraplength=650).grid(
+            row=10, column=0, columnspan=2, sticky="w", pady=(0, 18)
+        )
+        button_bar = ttk.Frame(container)
+        button_bar.grid(row=11, column=0, columnspan=2, sticky="e")
+        self.cancel_button = ttk.Button(button_bar, text="Cancel", command=self._cancel, state="disabled")
+        self.cancel_button.pack(side="left", padx=(0, 8))
+        self.export_button = ttk.Button(button_bar, text="Export scene frames", command=self._start)
+        self.export_button.pack(side="left")
+        ttk.Label(
+            container,
+            text="Only download videos you have permission to use. Scene detection can take several minutes.",
+            foreground="#666666",
+            wraplength=650,
+        ).grid(row=12, column=0, columnspan=2, sticky="w", pady=(18, 0))
 
     def _browse(self) -> None:
         chosen = filedialog.askdirectory(initialdir=self.output_var.get() or str(Path.home()))
@@ -115,6 +119,7 @@ class FrameExporterApp:
         self.url_entry.configure(state=state)
         self.output_entry.configure(state=state)
         self.browse_button.configure(state=state)
+        self.sensitivity_box.configure(state="disabled" if value else "readonly")
         self.export_button.configure(state=state)
         self.cancel_button.configure(state="normal" if value else "disabled")
 
@@ -124,20 +129,17 @@ class FrameExporterApp:
             messagebox.showerror(APP_NAME, "Please enter a valid YouTube or youtu.be link.")
             return
         output_root = Path(self.output_var.get()).expanduser()
-        if not str(output_root).strip():
-            messagebox.showerror(APP_NAME, "Please choose an output folder.")
-            return
         try:
             output_root.mkdir(parents=True, exist_ok=True)
         except OSError as exc:
             messagebox.showerror(APP_NAME, f"The output folder could not be created:\n{exc}")
             return
-
         self.cancel_event.clear()
         self.progress_var.set(0)
         self.status_var.set("Starting…")
         self._set_running(True)
-        threading.Thread(target=self._worker, args=(url, output_root), daemon=True).start()
+        threshold = SENSITIVITY[self.sensitivity_var.get()]
+        threading.Thread(target=self._worker, args=(url, output_root, threshold), daemon=True).start()
 
     def _progress_hook(self, data: dict) -> None:
         if self.cancel_event.is_set():
@@ -145,20 +147,70 @@ class FrameExporterApp:
         if data.get("status") == "downloading":
             total = data.get("total_bytes") or data.get("total_bytes_estimate")
             downloaded = data.get("downloaded_bytes", 0)
-            percent = min(95.0, (downloaded / total * 95.0)) if total else 0
-            speed = data.get("_speed_str", "").strip()
-            eta = data.get("_eta_str", "").strip()
-            details = "Downloading video"
-            if speed:
-                details += f" — {speed}"
-            if eta:
-                details += f", ETA {eta}"
-            self.events.put(("progress", (percent, details)))
+            percent = min(60.0, (downloaded / total * 60.0)) if total else 5.0
+            self.events.put(("progress", (percent, "Downloading video…")))
         elif data.get("status") == "finished":
-            self.events.put(("progress", (96.0, "Download complete; preparing frames…")))
+            self.events.put(("progress", (60.0, "Download complete; preparing scene detection…")))
 
-    def _worker(self, url: str, output_root: Path) -> None:
-        temp_dir = Path(tempfile.mkdtemp(prefix="yt-frame-exporter-"))
+    def _detect_scenes(self, video_file: Path, threshold: float) -> list[tuple[int, int]]:
+        video = open_video(str(video_file))
+        manager = SceneManager()
+        manager.add_detector(ContentDetector(threshold=threshold, min_scene_len=10))
+        detection_finished = threading.Event()
+
+        def stop_when_cancelled() -> None:
+            while not detection_finished.wait(0.2):
+                if self.cancel_event.is_set():
+                    manager.stop()
+                    return
+
+        threading.Thread(target=stop_when_cancelled, daemon=True).start()
+        self.events.put(("progress", (65.0, "Detecting scene changes…")))
+        try:
+            manager.detect_scenes(video=video, show_progress=False)
+        finally:
+            detection_finished.set()
+        if self.cancel_event.is_set():
+            raise Cancelled()
+        scenes = manager.get_scene_list(start_in_scene=True)
+        return [(start.frame_num, end.frame_num) for start, end in scenes]
+
+    def _save_scene_frames(self, video_file: Path, scenes: list[tuple[int, int]], folder: Path) -> int:
+        targets = scene_frame_targets(scenes)
+        capture = cv2.VideoCapture(str(video_file))
+        if not capture.isOpened():
+            raise RuntimeError("The downloaded video could not be opened for frame extraction.")
+        target_frames = set(targets)
+        last_target = max(target_frames, default=0)
+        frame_number = 0
+        written = 0
+        try:
+            while target_frames:
+                if self.cancel_event.is_set():
+                    raise Cancelled()
+                ok, frame = capture.read()
+                if not ok:
+                    break
+                if frame_number in target_frames:
+                    for filename in targets[frame_number]:
+                        if not cv2.imwrite(str(folder / filename), frame):
+                            raise RuntimeError(f"Could not write {filename}.")
+                        written += 1
+                    target_frames.remove(frame_number)
+                if frame_number % 30 == 0:
+                    percent = 70.0 + (frame_number / max(1, last_target)) * 29.0
+                    self.events.put(
+                        ("progress", (min(99.0, percent), "Exporting first and last scene frames…"))
+                    )
+                frame_number += 1
+        finally:
+            capture.release()
+        if target_frames:
+            raise RuntimeError("The video ended before all scene frames could be exported.")
+        return written
+
+    def _worker(self, url: str, output_root: Path, threshold: float) -> None:
+        temp_dir = Path(tempfile.mkdtemp(prefix="yt-scene-exporter-"))
         try:
             ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
             deno = find_deno()
@@ -178,39 +230,19 @@ class FrameExporterApp:
                 info = downloader.extract_info(url, download=True)
             if self.cancel_event.is_set():
                 raise Cancelled()
-
-            candidates = [
-                path for path in temp_dir.iterdir()
-                if path.is_file() and path.suffix.lower() in VIDEO_SUFFIXES
-            ]
+            candidates = [p for p in temp_dir.iterdir() if p.is_file() and p.suffix.lower() in VIDEO_SUFFIXES]
             if not candidates:
                 raise RuntimeError("The downloaded video file could not be found.")
             video_file = max(candidates, key=lambda path: path.stat().st_size)
+            scenes = self._detect_scenes(video_file, threshold)
+            if not scenes:
+                raise RuntimeError("No scenes were detected.")
             video_id = str(info.get("id") or "video")
-            folder = output_root / safe_folder_name(str(info.get("title") or "youtube_video"), video_id)
-            folder.mkdir(parents=True, exist_ok=True)
-
-            self.events.put(("progress", (97.0, "Exporting one frame per second…")))
-            command = make_ffmpeg_command(ffmpeg, video_file, folder / "frame_%06d.jpg")
-            self.ffmpeg_process = subprocess.Popen(
-                command,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.PIPE,
-                text=True,
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
-            )
-            _, stderr = self.ffmpeg_process.communicate()
-            return_code = self.ffmpeg_process.returncode
-            self.ffmpeg_process = None
-            if self.cancel_event.is_set():
-                raise Cancelled()
-            if return_code:
-                raise RuntimeError(stderr.strip() or "FFmpeg could not export the frames.")
-
-            frame_count = sum(1 for _ in folder.glob("frame_*.jpg"))
-            if frame_count == 0:
-                raise RuntimeError("No frames were created.")
-            self.events.put(("done", (folder, frame_count)))
+            base_name = safe_folder_name(str(info.get("title") or "youtube_video"), video_id)
+            folder = unique_output_folder(output_root, f"{base_name} - scene frames")
+            folder.mkdir(parents=True)
+            written = self._save_scene_frames(video_file, scenes, folder)
+            self.events.put(("done", (folder, len(scenes), written)))
         except Cancelled:
             self.events.put(("cancelled", None))
         except Exception as exc:
@@ -219,15 +251,12 @@ class FrameExporterApp:
             else:
                 self.events.put(("error", str(exc)))
         finally:
-            self.ffmpeg_process = None
             shutil.rmtree(temp_dir, ignore_errors=True)
 
     def _cancel(self) -> None:
         self.cancel_event.set()
-        self.status_var.set("Cancelling…")
-        process = self.ffmpeg_process
-        if process and process.poll() is None:
-            process.terminate()
+        if self.running:
+            self.status_var.set("Cancelling…")
 
     def _poll_events(self) -> None:
         try:
@@ -240,13 +269,15 @@ class FrameExporterApp:
                     self.progress_var.set(float(percent))
                     self.status_var.set(str(status))
                 elif event == "done":
-                    folder, frame_count = payload  # type: ignore[misc]
+                    folder, scene_count, frame_count = payload  # type: ignore[misc]
                     self.progress_var.set(100)
-                    self.status_var.set(f"Done — exported {frame_count:,} frames.")
+                    self.status_var.set(
+                        f"Done — detected {scene_count:,} scenes and exported {frame_count:,} images."
+                    )
                     self._set_running(False)
                     if messagebox.askyesno(
                         APP_NAME,
-                        f"Exported {frame_count:,} frames to:\n{folder}\n\nOpen the folder now?",
+                        f"Detected {scene_count:,} scenes and exported {frame_count:,} images to:\n{folder}\n\nOpen the folder now?",
                     ):
                         os.startfile(folder)  # type: ignore[attr-defined]
                 elif event == "cancelled":
@@ -257,7 +288,7 @@ class FrameExporterApp:
                     self.progress_var.set(0)
                     self.status_var.set("Export failed")
                     self._set_running(False)
-                    messagebox.showerror(APP_NAME, f"Could not export frames:\n\n{payload}")
+                    messagebox.showerror(APP_NAME, f"Could not export scene frames:\n\n{payload}")
         except queue.Empty:
             pass
         self.root.after(100, self._poll_events)
@@ -275,7 +306,7 @@ def main() -> None:
         root.tk.call("tk", "scaling", 1.25)
     except tk.TclError:
         pass
-    FrameExporterApp(root)
+    SceneFrameExporterApp(root)
     root.mainloop()
 
 

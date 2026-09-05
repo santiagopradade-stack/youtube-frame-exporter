@@ -20,11 +20,11 @@ if errorlevel 1 goto :failed
 python -m pip install -r requirements.txt pyinstaller==6.22.2
 if errorlevel 1 goto :failed
 
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name YouTubeFrameExporter --add-binary "deno.exe;." --collect-all imageio_ffmpeg --collect-all yt_dlp --collect-all yt_dlp_ejs app.py
+python -m PyInstaller --noconfirm --clean --onefile --windowed --name YouTubeSceneFrameExporter --add-binary "deno.exe;." --collect-all imageio_ffmpeg --collect-all yt_dlp --collect-all yt_dlp_ejs --collect-all scenedetect app.py
 if errorlevel 1 goto :failed
 
 echo.
-echo Build complete: dist\YouTubeFrameExporter.exe
+echo Build complete: dist\YouTubeSceneFrameExporter.exe
 pause
 exit /b 0
 

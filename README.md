@@ -1,63 +1,65 @@
-# YouTube Frame Exporter
+# Exportador de fotogramas de YouTube — Studio Moka
 
-A simple Windows desktop app that downloads one YouTube video and exports frames into three separate interval folders.
+Proyecto fuente para Windows que descarga un vídeo de YouTube autorizado y exporta fotogramas JPG cada **1, 2, 4, 8 o 16 segundos**. Incluye selector de carpeta, progreso, cancelación y la identidad visual de Studio Moka.
 
-## Download
+## Requisitos
 
-Download the latest Windows executable from a successful
-[GitHub Actions build](https://github.com/santiagopradade-stack/youtube-frame-exporter/actions).
-Open the newest **Build Windows executable** run and download the
-`YouTubeFrameExporter-Windows` artifact.
+- Windows 11 de 64 bits.
+- Python 3.12 de 64 bits, instalado desde `python.org` con el lanzador `py.exe`.
+- Deno: `winget install DenoLand.Deno`.
+- Para firmar: un certificado **RSA** de firma de código emitido por una autoridad de confianza y Windows SDK (`signtool.exe`).
 
-The project is applying for free origin-verified code signing provided by
-[SignPath.io](https://signpath.io/), with a certificate provided by the
-[SignPath Foundation](https://signpath.org/). See the
-[code signing policy](CODE_SIGNING_POLICY.md).
+## Compilar
 
-## Use the app
+Abre PowerShell en esta carpeta y ejecuta:
 
-1. Run `YouTubeFrameExporter.exe`.
-2. Paste a YouTube or `youtu.be` video link.
-3. Choose where to save the images.
-4. Click **Export frames**.
-
-For each link, the app creates a video-specific folder like this:
-
-```text
-Video title [video-id]/
-├── Every 1 Second/
-│   ├── frame_000000s.jpg
-│   ├── frame_000001s.jpg
-│   └── ...
-├── Every 3 Seconds/
-│   ├── frame_000000s.jpg
-│   ├── frame_000003s.jpg
-│   └── ...
-└── Every 5 Seconds/
-    ├── frame_000000s.jpg
-    ├── frame_000005s.jpg
-    └── ...
+```powershell
+.\build.ps1
 ```
 
-Every new export gets its own folder. If the same video is exported again, the app adds `(2)`, `(3)`, and so on instead of overwriting existing images.
+El ejecutable se crea en:
 
-## Build the Windows `.exe`
+```text
+dist\Exportador de fotogramas de YouTube - Studio Moka.exe
+```
 
-1. Install [Python 3.11 or newer](https://www.python.org/downloads/windows/) and enable **Add Python to PATH**.
-2. Double-click `build_windows.bat`.
-3. Run `dist\\YouTubeFrameExporter.exe`.
+El script crea un entorno virtual, instala versiones fijadas de las dependencias, ejecuta las pruebas y compila desde cero con PyInstaller. Deno y FFmpeg quedan incluidos en el ejecutable final.
 
-The build script packages Deno, FFmpeg, OpenCV, `yt-dlp`, and Python into the executable. The result does not require separate runtime installations.
+## Firmar para Control inteligente de aplicaciones
 
-You can also run the **Build Windows executable** workflow in GitHub Actions and download the `YouTubeFrameExporter-Windows` artifact.
+La compilación limpia no garantiza por sí sola que Windows permita ejecutar un archivo nuevo. Para identificar a Studio Moka como publicador y mejorar la compatibilidad con Control inteligente de aplicaciones, firma el resultado con un certificado RSA confiable instalado en `Cert:\CurrentUser\My`:
 
-## Notes
+```powershell
+.\sign.ps1 -CertificateThumbprint "HUELLA_SHA1_DE_40_CARACTERES"
+.\verify-signature.ps1
+```
 
-- Only download videos you have permission to use and follow YouTube's terms.
-- Long or high-resolution videos can take several minutes and produce many images.
+El nombre de empresa incluido en `version_info.txt` es únicamente metadato: **no sustituye una firma Authenticode**. No incluyas certificados, contraseñas ni archivos `.pfx` dentro del proyecto o del repositorio.
 
-## License and privacy
+Microsoft también ofrece Trusted Signing. Consulta la documentación oficial: <https://learn.microsoft.com/windows/apps/develop/smart-app-control/code-signing-for-smart-app-control>
 
-The project is released under the [MIT License](LICENSE). It does not collect
-analytics, telemetry, or personal information. See the
-[privacy policy](PRIVACY.md) for details.
+## Ejecutar desde código durante el desarrollo
+
+Después de ejecutar una vez `build.ps1`, puedes iniciar la interfaz con:
+
+```powershell
+$env:PYTHONPATH = "$PWD\src"
+.\.venv\Scripts\python.exe .\src\app.py
+```
+
+## Estructura
+
+- `src/app.py`: interfaz, descarga, progreso y exportación.
+- `src/core.py`: validación, nombres seguros y comando FFmpeg.
+- `assets/`: logo PNG e icono ICO de Studio Moka.
+- `tests/`: pruebas automatizadas.
+- `StudioMokaFrameExporter.spec`: configuración reproducible de PyInstaller.
+- `build.ps1`: compilación limpia.
+- `sign.ps1`: firma Authenticode por huella de certificado.
+- `verify-signature.ps1`: comprobación independiente de la firma.
+
+## Seguridad y uso
+
+- Descarga únicamente contenido propio o para el que tengas autorización.
+- No desactives Control inteligente de aplicaciones ni el antivirus para ejecutar compilaciones sin firma.
+- Revisa el código y ejecuta las pruebas antes de distribuir una versión.
